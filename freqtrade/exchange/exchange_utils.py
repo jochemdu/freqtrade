@@ -35,7 +35,27 @@ from freqtrade.util import FtPrecise
 CcxtModuleType = Any
 
 
+# ---------------------------------------------------------------------------
+# Native plugin registry — added by personal fork (Phase B2 of v1.5.0-wip)
+# ---------------------------------------------------------------------------
+# Exchanges that have NATIVE Freqtrade plugins (subclasses of Exchange in the
+# freqtrade.exchange namespace) but are NOT in ccxt's exchange list. These
+# bypass ccxt entirely and use vendor-specific SDKs (e.g., ib_async for IBKR,
+# alpaca-py for the order/account paths of Alpaca even though Alpaca IS in ccxt).
+#
+# is_exchange_known_ccxt() and validate_exchange() short-circuit to True for
+# these names so check_exchange.py accepts them without trying to instantiate
+# a non-existent ccxt module.
+NATIVE_PLUGIN_EXCHANGES: frozenset[str] = frozenset({
+    "interactivebrokers",  # InteractiveBrokers (B2): ib_async-based, no ccxt support
+    # alpaca is in ccxt's list (HTTP REST), so doesn't need to be here
+})
+
+
 def is_exchange_known_ccxt(exchange_name: str, ccxt_module: CcxtModuleType | None = None) -> bool:
+    # Native plugins (e.g. interactivebrokers): bypass ccxt check.
+    if exchange_name.lower() in NATIVE_PLUGIN_EXCHANGES:
+        return True
     return exchange_name in ccxt_exchanges(ccxt_module)
 
 
@@ -74,10 +94,16 @@ def validate_exchange(exchange: str) -> tuple[bool, str, str, ccxt.Exchange | No
     returns: can_use, reason, exchange_object
         with Reason including both missing and missing_opt
     """
+    # Native plugins (e.g. interactivebrokers): report as valid + no ex_mod.
+    if exchange.lower() in NATIVE_PLUGIN_EXCHANGES:
+        return True, "", "", None
     try:
         ex_mod = getattr(ccxt.pro, exchange.lower())()
     except AttributeError:
-        ex_mod = getattr(ccxt.async_support, exchange.lower())()
+        try:
+            ex_mod = getattr(ccxt.async_support, exchange.lower())()
+        except AttributeError:
+            return False, f"Exchange {exchange!r} not in ccxt", "", None
 
     if not ex_mod or not ex_mod.has:
         return False, "", "", None
