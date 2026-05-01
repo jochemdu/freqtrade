@@ -1,3 +1,186 @@
+# 🧠 Freqtrade for Stocks, Forex, and Immortality Coin
+
+This fork of [Freqtrade](https://www.freqtrade.io/) adds support for:
+
+- ✅ **Stocks**
+- 🌍 **Forex**
+- 🪙 **Immortality Coin** (trade our coin)
+
+It stays in sync with upstream Freqtrade and allows **all your existing strategies to run without modification** on these new markets.
+
+---
+
+## ✅ Current Status
+
+| Market                  | Backtesting      | Dry Run      | Live Trading       |
+|-------------------------|------------------|--------------|--------------------|
+| **Crypto**              | ✅               | ✅           | ✅                 |
+| **Stocks**              | ✅               | ✅           | ❌ *(Untested)*    |
+| **Forex**               | ❌ *(Limited)*   | ✅           | ❌ *(Untested)*    |
+| **Immortality coin**    | ❌ *(Untested)*  | ✅           | ✅                 |
+
+> ⚠️ **Live trading for Stocks and Forex has not been tested. Proceed with caution.**
+
+---
+
+## 🔧 Installation
+
+Installation is identical to [Freqtrade](https://www.freqtrade.io/en/stable/installation/):
+
+```plain
+./setup.sh -i
+```
+```plain
+freqtrade create-userdir --userdir user_data
+```
+
+Sample configs and strategies are provided in the config_examples/ folder. Copy them to your user_data/ directory and run the test commands below.
+
+### 📈 Stock Trading (via alpacastocks)
+
+Setup
+
+- Sign up at Alpaca
+- Get your Paper Trading API keys
+- Copy:
+  - stocks_config.json → user_data/
+  - TestAlpaca.py → user_data/strategies/
+- Edit stocks_config.json to include your Alpaca API keys
+- ✅ Use "USD" instead of "USDT" in your config. Example: "TSLA/USD"
+
+```
+Example Config Snippet
+
+{
+  "db_url": "sqlite:///tradesv3.stocks.dryrun.sqlite",
+  "stake_currency": "USD",
+  "fiat_display_currency": "USD",
+  "exchange": {
+    "name": "alpacastocks",
+    "key": "your-api-key",
+    "secret": "your-secret-key",
+    "pair_whitelist": ["TSLA/USD"],
+    "pair_blacklist": []
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList",
+      "pairs": ["TSLA/USD"]
+    }
+  ]
+}
+```
+
+Run Commands
+
+```plain
+freqtrade download-data --config user_data/stocks_config.json --timeframes 5m --timerange 20240101-20240201
+```
+```plain
+freqtrade backtesting -c user_data/stocks_config.json -s SampleStrategy --timerange=20240101-20240201
+```
+```plain
+freqtrade trade -c user_data/stocks_config.json -s TestAlpaca
+```
+
+### 🌍 Forex Trading (via interactivebrokers)
+
+Setup
+
+- Sign up at Interactive Brokers
+- Download and install Trader Workstation (TWS):
+
+  cd ~/Downloads
+  chmod u+x tws-latest-linux-x64.sh
+  ./tws-latest-linux-x64.sh
+
+- In TWS settings:
+  - Port: 4002 (paper) or 7497 (live)
+  - Enable:
+    - ActiveX & socket clients
+    - Connections from localhost
+  - Disable: Read-only API
+- Ensure your base currency is USD
+- Copy:
+  - forex_config.json → user_data/
+  - TestIB.py → user_data/strategies/
+
+```
+Example Config Snippet
+
+{
+  "db_url": "sqlite:///tradesv3.forex.dryrun.sqlite",
+  "exchange": {
+    "name": "interactivebrokers",
+    "key": "",
+    "secret": "",
+    "pair_whitelist": [
+      "EUR/USD", "GBP/USD", "JPY/USD", "AUD/USD", "CAD/USD",
+      "CHF/USD", "NZD/USD", "EUR/GBP", "CNH/USD", "MXN/USD"
+    ],
+    "pair_blacklist": []
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList",
+      "pairs": [
+        "EUR/USD", "GBP/USD", "JPY/USD", "AUD/USD", "CAD/USD",
+        "CHF/USD", "NZD/USD", "EUR/GBP", "CNH/USD", "MXN/USD"
+      ]
+    }
+  ]
+}
+```
+
+Run Commands
+
+```plain
+freqtrade download-data --config user_data/forex_config.json --timeframes 5m --timerange 20240101-20240201
+```
+```plain
+freqtrade backtesting -c user_data/forex_config.json -s SampleStrategy --timerange=20240101-20240201
+```
+```plain
+freqtrade trade -c user_data/forex_config.json -s TestIB
+```
+
+### 🪙 Immortality Coin (Crypto Wallet Trading)
+
+Trade Immortality Coin directly from your wallet using any Freqtrade-compatible strategy.
+
+Setup
+
+- Sign up at NodeReal.io
+- Obtain an API key
+- Edit immortality_config.json in config_examples/:
+  - Add your public key, private key, and NodeReal API key
+- Copy:
+  - immortality_config.json → user_data/
+  - TestIMT.py → user_data/strategies/
+
+Run Command
+
+```plain
+freqtrade trade -c user_data/immortality_config.json -s TestIMT
+```
+
+### ⚠️ Notes and Differences
+
+- Decimal precision:
+  - Crypto uses 8 decimals
+  - Stocks & Forex typically use 2 decimals
+- Exchange data limits:
+  - Historical data may require paid subscriptions (especially for Forex)
+- Market hours:
+  - Stocks & Forex markets are not 24/7
+  - Exchanges “sleep” during off-hours and resume before open
+
+### 🧪 FreqUI Integration
+
+Check out the stock and forex display in FreqUI — all additional markets integrate seamlessly with the UI!
+
+=======
+
 # ![freqtrade](https://raw.githubusercontent.com/freqtrade/freqtrade/develop/docs/assets/freqtrade_poweredby.svg)
 
 [![Freqtrade CI](https://github.com/freqtrade/freqtrade/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/freqtrade/freqtrade/actions/workflows/ci.yml)

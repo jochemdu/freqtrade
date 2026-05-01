@@ -64,6 +64,9 @@ SUPPORTED_EXCHANGES = [
     "kraken",
     "krakenfutures",
     "okx",
+    "alpacastocks",
+    "interactivebrokers",
+    "immortality",
     "myokx",
 ]
 

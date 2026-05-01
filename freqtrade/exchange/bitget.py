@@ -7,6 +7,7 @@ from freqtrade.constants import BuySell
 from freqtrade.enums import OPTIMIZE_MODES, CandleType, MarginMode, PriceType, TradingMode
 from freqtrade.exceptions import (
     DDosProtection,
+    InvalidOrderException,
     OperationalException,
     RetryableOrderError,
     TemporaryError,
@@ -142,6 +143,19 @@ class Bitget(Exchange):
 
         return self._fetch_stop_order_fallback(order_id, pair)
 
+    def cancel_stoploss_order(self, order_id: str, pair: str, params: dict | None = None) -> dict:
+        cancel_params = params.copy() if params else {}
+        cancel_params["stop"] = True
+
+        if self.trading_mode != TradingMode.FUTURES:
+            return self.cancel_order(order_id, pair, cancel_params)
+
+        try:
+            return self.cancel_order(order_id, pair, {**cancel_params, "planType": "pos_loss"})
+        except (InvalidOrderException, IndexError):
+            # Keep compatibility with stoploss orders created by older versions.
+            return self.cancel_order(order_id, pair, cancel_params)
+
     @retrier
     def additional_exchange_init(self) -> None:
         """
@@ -162,12 +176,6 @@ class Bitget(Exchange):
             ) from e
         except ccxt.BaseError as e:
             raise OperationalException(e) from e
-
-    def _lev_prep(self, pair: str, leverage: float, side: BuySell, accept_fail: bool = False):
-        if self.trading_mode != TradingMode.SPOT:
-            # Explicitly setting margin_mode is not necessary as marginMode can be set per order.
-            # self.set_margin_mode(pair, self.margin_mode, accept_fail)
-            self._set_leverage(leverage, pair, accept_fail)
 
     def _get_params(
         self,

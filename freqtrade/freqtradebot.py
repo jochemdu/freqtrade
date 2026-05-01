@@ -5,7 +5,7 @@ Freqtrade is the main module of this bot. It contains the FreqtradeBot class.
 import logging
 import traceback
 from copy import deepcopy
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta, timezone
 from math import isclose
 from threading import Lock
 from time import sleep
@@ -92,6 +92,7 @@ class FreqtradeBot(LoggingMixin):
         exchange_config: ExchangeConfig = deepcopy(config["exchange"])
         # Remove credentials from original exchange config to avoid accidental credential exposure
         remove_exchange_credentials(config["exchange"], True)
+
         try:
             self.exchange = ExchangeResolver.load_exchange(
                 self.config, exchange_config=exchange_config, load_leverage_tiers=True
@@ -131,7 +132,7 @@ class FreqtradeBot(LoggingMixin):
             # Attach Wallets to strategy instance
             self.strategy.wallets = self.wallets
 
-            # Init ExternalMessageConsumer if enabled
+            # Init ExternalMessageConsumer if enabled (Upstream typing improvement)
             self.emc: ExternalMessageConsumer | None = (
                 ExternalMessageConsumer(self.config, self.dataprovider)
                 if self.config.get("external_message_consumer", {}).get("enabled", False)
@@ -172,26 +173,28 @@ class FreqtradeBot(LoggingMixin):
                         self._schedule.every().day.at(t).do(update)
 
             self._schedule.every().day.at("00:02").do(self.exchange.ws_connection_reset)
+            # Upstream improvement: Scheduled wallet state record
             self._schedule.every().day.at("00:07").do(self.wallets.record_wallet_state)
 
             self.strategy.ft_bot_start()
             # Initialize protections AFTER bot start - otherwise parameters are not loaded.
             self.protections = ProtectionManager(self.config, self.strategy.protections)
-
-            def log_took_too_long(duration: float, time_limit: float):
-                logger.warning(
-                    f"Strategy analysis took {duration:.2f}s, more than 25% of the timeframe "
-                    f"({time_limit:.2f}s). This can lead to delayed orders and missed signals."
-                    "Consider either reducing the amount of work your strategy performs "
-                    "or reduce the amount of pairs in the Pairlist."
-                )
-
-            self._measure_execution = MeasureTime(log_took_too_long, timeframe_secs * 0.25)
+            
+            # HEAD approach: Keep as instance method for cleaner class structure
+            self._measure_execution = MeasureTime(self.log_took_too_long, timeframe_secs * 0.25)
 
         except Exception as e:
-            # Graceful shutdown in case of failed initialization.
+            # Upstream improvement: Graceful shutdown in case of failed initialization.
             self.cleanup()
             raise e from e
+
+    def log_took_too_long(self, duration: float, time_limit: float):
+        logger.warning(
+            f"Strategy analysis took {duration:.2f}s, more than 25% of the timeframe "
+            f"({time_limit:.2f}s). This can lead to delayed orders and missed signals. "
+            f"Consider either reducing the amount of work your strategy performs "
+            f"or reducing the number of pairs in the Pairlist."
+        )
 
     def notify_status(self, msg: str, msg_type=RPCMessageType.STATUS) -> None:
         """
@@ -353,6 +356,10 @@ class FreqtradeBot(LoggingMixin):
         # Called last to include the included pairs
         if _prev_whitelist != _whitelist:
             self.rpc.send_msg({"type": RPCMessageType.WHITELIST, "data": _whitelist})
+
+        # Security addition, ensure no duplicates creep into the whitelist.
+        whitelist_temp = _whitelist
+        _whitelist = list(set(whitelist_temp))
 
         return _whitelist
 
@@ -610,21 +617,45 @@ class FreqtradeBot(LoggingMixin):
     # enter positions / open trades logic and methods
     #
 
+    #
+    # enter positions / open trades logic and methods
+    #
+
+    def _prune_whitelist(self, whitelist: list[str], now_utc: datetime) -> list[str]:
+        """
+        Remove pairs with open trades or orders within the last 15 minutes.
+        """
+        pruned = whitelist.copy()
+        for trade in Trade.get_open_trades():
+            time_since_trade = now_utc - trade.open_date_utc
+            if trade.pair in pruned and time_since_trade < timedelta(minutes=15):
+                pruned.remove(trade.pair)
+                logger.debug("Removed %s from pair whitelist", trade.pair)
+            for order in trade.orders:
+                if order.ft_is_open and order.ft_pair in pruned:
+                    pruned.remove(order.ft_pair)
+                    logger.info("Removed %s from pair whitelist, order open", order.ft_pair)
+        return list(set(pruned))
+
     def enter_positions(self) -> int:
         """
         Tries to execute entry orders for new trades (positions)
         """
         trades_created = 0
-
         whitelist = deepcopy(self.active_pair_whitelist)
         if not whitelist:
             self.log_once("Active pair whitelist is empty.", logger.info)
             return trades_created
-        # Remove pairs for currently opened trades from the whitelist
-        for trade in Trade.get_open_trades():
-            if trade.pair in whitelist:
-                whitelist.remove(trade.pair)
-                logger.debug("Ignoring %s in pair whitelist", trade.pair)
+
+        if self.config.get("allow_multiple_positions", False):
+            now_utc = datetime.now(timezone.utc)  # noqa: UP017
+            whitelist = self._prune_whitelist(whitelist, now_utc)
+        else:
+            # Remove currently opened trades from whitelist
+            for trade in Trade.get_open_trades():
+                if trade.pair in whitelist:
+                    whitelist.remove(trade.pair)
+                    logger.debug("Ignoring %s in pair whitelist", trade.pair)
 
         if not whitelist:
             self.log_once(
@@ -632,21 +663,21 @@ class FreqtradeBot(LoggingMixin):
                 logger.info,
             )
             return trades_created
+
         if PairLocks.is_global_lock(side="*"):
-            # This only checks for total locks (both sides).
-            # per-side locks will be evaluated by `is_pair_locked` within create_trade,
-            # once the direction for the trade is clear.
             lock = PairLocks.get_pair_longest_lock("*")
             if lock:
                 self.log_once(
-                    f"Global pairlock active until "
-                    f"{lock.lock_end_time.strftime(constants.DATETIME_PRINT_FORMAT)}. "
-                    f"Not creating new trades, reason: {lock.reason}.",
+                    f"""Global pairlock active until
+                        {lock.lock_end_time.strftime(constants.DATETIME_PRINT_FORMAT)}.
+                        Not creating new trades, reason: {lock.reason}.""",
                     logger.info,
+                    True,
                 )
             else:
                 self.log_once("Global pairlock active. Not creating new trades.", logger.info)
             return trades_created
+
         # Create entity and execute trade for each pair from whitelist
         for pair in whitelist:
             try:
